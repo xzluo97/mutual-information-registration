@@ -1,6 +1,6 @@
 # Mutual information image registration
 
-This library provides the code for calculating mutual information between two (multimodal) images. The lecture notes of an invited talk at the course *DATA630015: Medical Image Analysis (postgrad)* are included as a bonus. 
+This library provides the code for calculating mutual information between two (multimodal) images. The [lecture notes](https://github.com/xzluo97/mutual-information-registration/blob/main/MI_theory_and_examples.pdf) of an invited talk at the course *DATA630015: Medical Image Analysis (postgrad)* are included as a bonus. 
 
 ## Citation
 
