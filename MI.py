@@ -26,8 +26,7 @@ class MI(nn.Module):
         self.eps = eps
         self.kwargs = kwargs
         self.bk_threshold = self.kwargs.pop('bk_threshold', float('-inf'))
-        self.normalized = self.kwargs.pop('normalized', False)  # normalized MI?
-        # multi-resolution
+        self.normalized = self.kwargs.pop('normalized', False)
         if self.dimension == 2:
             self.scale_mode = 'bicubic'
         elif self.dimension == 3:
@@ -52,7 +51,6 @@ class MI(nn.Module):
 
         image_mask = mask.to(torch.bool) & (source > self.bk_threshold) & (target > self.bk_threshold)
 
-        # scale data
         if scale > 0:
             source = F.interpolate(source, scale_factor=2 ** (- scale), mode=self.scale_mode)
             target = F.interpolate(target, scale_factor=2 ** (- scale), mode=self.scale_mode)
@@ -61,17 +59,13 @@ class MI(nn.Module):
 
         B = source.shape[0]
 
-        # get masked intensities
         masked_source = [torch.masked_select(source[i], mask=image_mask[i]) for i in range(B)]
         masked_target = [torch.masked_select(target[i], mask=image_mask[i]) for i in range(B)]
 
-        # sample intensities
-        # sample_masks = [torch.rand_like(ms).le(self.sample_rate) for ms in masked_source]
         sample_mask = torch.rand_like(masked_source[0]).le(self.sample_rate)
         sampled_source = [torch.masked_select(masked_source[i], mask=sample_mask) for i in range(B)]
         sampled_target = [torch.masked_select(masked_target[i], mask=sample_mask) for i in range(B)]
 
-        # compute min/max value and bin values
         source_max_v = torch.stack([s.amax().detach() for s in sampled_source])
         source_min_v = torch.stack([s.amin().detach() for s in sampled_source])
         target_max_v = torch.stack([t.amax().detach() for t in sampled_target])
@@ -82,7 +76,6 @@ class MI(nn.Module):
         target_pad_min_v = target_min_v - target_bin_width * self._kernel_radius
         bin_center = torch.arange(num_bins + 2 * self._kernel_radius, dtype=source.dtype, device=source.device)
 
-        # get bin position for sampled intensities
         source_bin_pos = [(sampled_source[i] - source_pad_min_v[i]) / source_bin_width[i] for i in range(B)]
         target_bin_pos = [(sampled_target[i] - target_pad_min_v[i]) / target_bin_width[i] for i in range(B)]
         source_bin_idx = [p.floor().clamp(min=self._kernel_radius,
@@ -90,7 +83,6 @@ class MI(nn.Module):
         target_bin_idx = [p.floor().clamp(min=self._kernel_radius,
                                           max=self._kernel_radius + num_bins - 1).detach() for p in target_bin_pos]
 
-        # get minimum window index
         source_min_win_idx = [(i - self._kernel_radius + 1).to(torch.int64) for i in source_bin_idx]
         target_min_win_idx = [(i - self._kernel_radius + 1).to(torch.int64) for i in target_bin_idx]
         source_win_idx = [torch.stack([(smwi + r) for r in range(self._kernel_radius * 2)])
@@ -98,7 +90,6 @@ class MI(nn.Module):
         target_win_idx = [torch.stack([(tmwi + r) for r in range(self._kernel_radius * 2)])
                           for tmwi in target_min_win_idx]
 
-        # gather bin centers of the Parzen window
         source_win_bin_center = [torch.gather(bin_center.unsqueeze(1).repeat(1, source_win_idx[i].size(1)),
                                               dim=0, index=source_win_idx[i])
                                  for i in range(B)]
@@ -106,29 +97,25 @@ class MI(nn.Module):
                                               dim=0, index=target_win_idx[i])
                                  for i in range(B)]
 
-        # compute Parzen window kernels
         source_win_weight = [self._bspline_kernel(source_bin_pos[i].unsqueeze(0) - source_win_bin_center[i])
                              for i in range(B)]
         target_win_weight = [self._bspline_kernel(target_bin_pos[i].unsqueeze(0) - target_win_bin_center[i])
                              for i in range(B)]
 
-        # compute histogram
         source_bin_weight = torch.stack([torch.stack([torch.sum(source_win_idx[i].eq(idx) * source_win_weight[i], dim=0)
                                                       for idx in range(num_bins + self._kernel_radius * 2)], dim=0)
-                                         for i in range(B)])  # [B, num_bin + radius * 2, num_samples]
+                                         for i in range(B)])
 
         target_bin_weight = torch.stack([torch.stack([torch.sum(target_win_idx[i].eq(idx) * target_win_weight[i], dim=0)
                                                       for idx in range(num_bins + self._kernel_radius * 2)], dim=0)
-                                         for i in range(B)])  # [B, num_bin + radius * 2, num_samples]
+                                         for i in range(B)]) 
         source_hist = source_bin_weight.sum(-1)
         target_hist = target_bin_weight.sum(-1)
-        joint_hist = torch.bmm(source_bin_weight, target_bin_weight.transpose(1, 2))  # [B, num_bin + radius * 2, num_bin + radius * 2]
+        joint_hist = torch.bmm(source_bin_weight, target_bin_weight.transpose(1, 2))
 
-        # compute marginal densities
         source_density = source_hist / source_hist.sum(dim=-1, keepdim=True).clamp(min=self.eps)
         target_density = target_hist / target_hist.sum(dim=-1, keepdim=True).clamp(min=self.eps)
 
-        # compute joint density
         joint_density = joint_hist / joint_hist.sum(dim=(1, 2), keepdim=True).clamp(min=self.eps)
 
         return source_density, target_density, joint_density
@@ -179,7 +166,6 @@ class MI(nn.Module):
         return joint_entropy - target_entropy
 
     def _bspline_kernel(self, d):
-        # print(torch.all(torch.isnan(d)))
         d /= self.kernel_sigma
         return torch.where(d.abs() < 1.,
                            (3. * d.abs() ** 3 - 6. * d.abs() ** 2 + 4.) / 6.,
